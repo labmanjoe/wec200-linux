@@ -1,0 +1,24 @@
+Door controller:
+
+   WEC 200 Wiegand to Ethernet Controller
+   Manufacturer: GIGA-TMS
+   Brand Name: Promag
+
+   https://pacsuppliesusa.com/index.php?route=product/product&product_id=1238
+
+Card reader:
+
+   Any card reader with a wiegand output.   This was developed with an Indala FP3517A.
+
+Door closure sensor:
+  
+   This can be any sort of door closure sensor, that has
+   continuity when the door is closed.   The normal one is a magnetic
+   switch that goes in the frame and a magnet that goes in the door.
+
+   https://www.amazon.com/Honeywell-951WG-WH-Recessed-Magnetic-Contact/dp/B001UKY1A4
+
+Electric door lock:
+
+   These are varied, the wiring diagrams here assume a 12V lock, though since the WEC200
+   has a dry relay, you should be able to use anything supported by the relay.

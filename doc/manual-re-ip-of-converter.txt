@@ -1,0 +1,45 @@
+Alternatively you can use the wecconfig tool in the "misc" directory...
+
+# the thing for the door listens on port 1001
+# the broadcast/udp listener for IP address changes is on port 65535
+
+# re-iping a brand new promag
+
+## set up network
+
+sudo ifconfig eth0:promag 1.0.0.9 netmask 255.255.255.0
+sudo ifconfig eth0:promagc 172.31.253.5 netmask 255.255.255.0
+
+## connect it up to network and power on
+## connect unconfigured devices one at a time to the network
+
+## do
+
+echo "X" | nc -i 2 -u 1.0.0.1 65535
+
+## to query for the device.  it will return a string like
+##
+##     A0.24.77.1.142.72/1001/N**M*/**/GIGA-TMS/WEC200-01
+##
+## this ^^^^^^^^^^^^^^^^ is the mac address in decimal
+
+## get mac address back and use as beginning of next command
+## and don't reuse IP address!
+## make sure to 0-pad IP address and use echo -n
+
+echo -n "A0.24.77.1.121.0//172.031.253.007" | nc -u 1.0.0.1 65535
+
+##       ^^^^^^^^^^^^^^^^ this is the first part of the above returned string
+
+
+## you can do it all at once
+
+echo "X" | nc -w 1 -u 1.0.0.1 65535 | cut -d/ -f1 | sed -e 's|$|//172.031.253.007|' | tr -d \\n | nc -w 1 -u 1.0.0.1 65535
+
+## note that this all uses udp so sometimes it might not work the
+## first time.
+
+## not sure how to change netmask
+
+## if you are re-ip-ing an existing converter you need to use the
+## existing IP address instead of 1.0.0.1 in the above commands

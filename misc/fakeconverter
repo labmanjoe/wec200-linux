@@ -1,0 +1,197 @@
+#!/bin/bash
+
+## poor man's tester of the WEC-200 script
+
+## this needs to be a literal ctrl b
+ctrlb=""
+
+doorfake() {
+
+   echo " --------------------- sleeping 10 " 1>&2
+   sleep 10
+    
+   ## bad card
+   echo " --------------------- bad card " 1>&2
+   echo \"1234567890123
+   sleep .5
+   
+   ## good card
+   echo " --------------------- good card" 1>&2
+   echo \"0000002944222
+   sleep .5
+
+   ## good card itlab
+   echo " --------------------- good card itlab" 1>&2
+   echo \"0000002944466
+   sleep .5
+
+   #start
+   echo ${ctrlb}00
+
+   sleep 4
+   
+   #open handle 
+   #echo ${ctrlb}10
+
+   sleep .2
+
+   #open door (& handle still open)
+   echo ${ctrlb}11
+   
+   sleep 2
+   
+   #release handle
+   echo ${ctrlb}01
+
+   sleep 2
+
+
+   echo " --------------------- two ormore signal handle " 1>&2
+
+   # close door
+   echo ${ctrlb}00
+
+   sleep 4
+   
+   #open handle
+   #echo ${ctrlb}10
+
+   sleep .2
+
+   #open door
+   echo ${ctrlb}11
+   
+   sleep 2
+   
+   #release handle
+   echo ${ctrlb}01
+
+   sleep .5
+
+   #open handle
+   echo ${ctrlb}11
+
+   sleep 4
+
+   #release handle
+   echo ${ctrlb}01
+
+   sleep 4
+
+   #open handle
+   echo ${ctrlb}11
+
+   sleep 1 
+
+   #release handle
+   echo ${ctrlb}01
+
+   sleep 1
+
+   #open handle
+   echo ${ctrlb}11
+   
+   sleep 1
+
+   #release handle
+   echo ${ctrlb}01
+
+   sleep 1
+
+   #open handle
+   echo ${ctrlb}11
+
+   sleep 1
+   
+   #release handle
+   echo ${ctrlb}01
+
+   sleep 1
+
+   #open handle
+   echo ${ctrlb}11
+
+   sleep 2
+
+   #release handle
+   echo ${ctrlb}01
+
+   sleep 2
+   
+   ## close door
+
+   echo " --------------------- one signal handle " 1>&2
+
+   
+   # close door
+   echo ${ctrlb}00
+
+   sleep 4
+
+   #open handle
+   echo ${ctrlb}10
+
+   sleep .2
+
+   #open door
+   echo ${ctrlb}11
+   
+   sleep 2
+   
+   #release handle
+   echo ${ctrlb}01
+
+   sleep .5
+
+   #open handle
+   echo ${ctrlb}11
+
+   sleep 2
+
+   #release handle
+   echo ${ctrlb}01
+
+   sleep 2
+
+   echo "Purposefully unexpected data from card reader"
+   
+   sleep 1
+
+
+}
+
+
+doorloop() {
+  while [ 1 ] 
+  do
+     doorfake
+  done
+}
+
+catloop() {
+    cat -v >/dev/tty
+}
+
+
+if [ "$I_AM_INSIDE_MYSELF_DOORBUTT" == "yes" ]
+then
+    set -e
+    doorloop &
+    ##catloop
+    exit
+fi
+
+export I_AM_INSIDE_MYSELF_DOORBUTT=yes
+
+port="$1"
+
+if [ "$port" = "" ]
+then
+   port=1025
+fi
+
+while [ 1 ] 
+do 
+  $0 | nc -l "$port"
+  sleep .5
+done

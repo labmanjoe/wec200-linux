@@ -1,0 +1,33 @@
+## This is the file for the 
+##  ___ _____   _        _    ____  
+## |_ _|_   _| | |      / \  | __ ) 
+##  | |  | |   | |     / _ \ |  _ \ 
+##  | |  | |   | |___ / ___ \| |_) |
+## |___| |_|   |_____/_/   \_\____/ 
+##
+## It is read by the card reader for the IT Lab in addition to the 
+## 5th and 6th floor server room card readers and
+## the main entry doors card readers.
+##
+## Someone listed in this file can open any door at the company; if
+## they are listed here there is no need to list them elsewhere.
+##
+## For general information, there are three groups of doors.
+##
+## The highest security level is for the IT lab, which is only 
+## accessible by people whose card is listed in the file
+##    /etc/doorman/cards.itlab
+##
+## The next security level is the 5th and 6th floor server rooms.
+## These are accessible by people whose cards are listed in the files
+##    /etc/doorman/cards.itlab   AND
+##    /etc/doorman/cards.server
+##
+## The last security level is the general entry doors group.   The
+## entry doors are openable by people listed in any one of the
+## 3 files:
+##    /etc/doorman/cards.itlab   AND
+##    /etc/doorman/cards.server  AND
+##    /etc/doorman/cards
+
+0000002944466 David Carradine

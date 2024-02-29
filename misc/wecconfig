@@ -1,0 +1,210 @@
+#! /usr/bin/perl
+use warnings;
+use strict;
+
+use Socket qw(:all);
+#use POSIX ":sys_wait_h";
+
+$| = 1;
+
+my $destbcast = "255.255.255.255";
+#$destbcast = "172.31.253.255";
+
+my $arg = shift;
+$destbcast = $arg if (defined $arg);
+
+
+my $udp_port = 65535;
+  
+## socket
+socket(SOCKET, PF_INET, SOCK_DGRAM, getprotobyname("udp"))
+    or die "Error: can't create an udp socket: $!\n";
+
+select((select(SOCKET), $| = 1)[0]); 
+
+my $broadcastAddr = sockaddr_in($udp_port, inet_aton($destbcast));
+setsockopt(SOCKET, SOL_SOCKET, SO_BROADCAST, 1);
+
+## wait for input
+
+
+my $care = '';
+vec($care, fileno(SOCKET), 1) = 1;
+vec($care, fileno(STDIN), 1) = 1;
+
+my $nexttime = time - 1;
+
+my $line = "";
+my $store = {};
+my $item = 0;
+
+my $prompt = "";
+
+while (1) {
+    
+    my $d = $nexttime - time;
+    
+    if ($d <= 0) {
+	send(SOCKET, 'X', 0,  $broadcastAddr)
+	  or die "Error sedning: $!\n";
+	
+	$nexttime = time + 10;
+	$d = 10;
+    }
+    
+    my $rin = $care;
+    my $rout = '';
+    my $rerr = $care;
+    
+    select $rin, $rout, $rerr, $d;
+
+    my $input;
+    if (vec($rin, fileno(SOCKET), 1)) {
+	my $addr = recv(SOCKET, $input, 4096, 0);
+	$addr = addr($addr);
+		
+	my $rec = $store->{"$addr->$input"};
+
+	my $itemid;
+	if (!defined $rec) {
+	    $item++;
+	    $itemid = $item;
+
+	    $rec = {
+		'addr' => $addr,
+		'resp' => $input,
+		'cnt'  => 0,
+		'item' => $item,		
+	    };
+	    	    
+	    printf "\r%3d: %s => %s\n",
+                           $itemid, $addr, $input;
+
+	    $prompt = sprintf "%3d %3d Which? ", $itemid, 1;
+	    
+	    print "$prompt";	    
+	}
+	else {
+	    $itemid = $rec->{"item"};
+	    $prompt = sprintf "\r%3d %3d Which? ",
+      	              $itemid, $rec->{"cnt"} + 1;
+	    print "$prompt";
+	}
+
+	$rec->{"cnt"}++;
+	$store->{$rec->{"item"}} = $rec;
+	$store->{"$addr->$input"} = $rec;
+	
+
+    }
+    
+    
+    if (vec($rin, fileno(STDIN), 1) || vec ($rerr, fileno(STDIN), 1)) {      
+	#my $c = getc STDIN;
+	#       sysread FILEHANDLE,SCALAR,LENGTH,OFFSET
+	
+	my $c;
+	
+	if (sysread(STDIN, $c, 1, 0) <= 0) { exit(0); }
+	
+	#print "$c";
+	$line .= $c;
+	
+	if ($c eq "\n") {
+	    #print "LINE: $line\n";
+            $line =~ s/^[[:space:]]+//;
+            $line =~ s/[[:space:]]+$//;
+            if ($line ne '') {
+                reconfigure($line, $store);
+            }
+	    print "$prompt";
+            $line = "";
+	}
+    }
+    
+}
+
+sub reconfigure {
+    my $which = shift;
+    my $devices = shift;
+
+    if (!($which =~ m/^[0-9]+$/)) {
+	print "Invalid device $which\n";
+	return;
+    }
+
+    my $dev = $devices->{$which};
+    
+    if (!defined $dev) {
+        print "Unknown device $which \n";
+        return;
+    }
+
+    my $addr = $dev->{'addr'};
+    my $info = $dev->{'resp'};
+    my $mac = $info;
+
+    $mac =~ s|/.*$||;
+    
+    if (!($mac =~ m/^A([0-9]{1,3}[.]){5}[0-9]{1,3}$/)) {
+	print "Mac address $mac not in expected format\n";
+	return;
+    }
+    
+    my $ip;
+    while (1) {
+	print "New IP address? ";
+
+	$ip = <STDIN>;
+	$ip =~ s/[\x0d\x0a]//g;
+
+ 	my @ip = split("[.]", $ip); 
+	
+	if (scalar(@ip) != 4) {
+	    print "IP address must have four octets!\n";
+	    next;
+	}
+	
+	$ip = "";
+
+	for my $c (@ip) {
+	    if (!($c =~ m/^[0-9]{1,3}$/)) {
+		print "IP address component $c is not correct\n";
+		next;
+	    }		
+	    if ($c > 255) {
+		print "IP address component $c is > 255\n";
+		next;
+	    }
+	    
+	    while (length($c) < 3) {
+		$c = "0$c";
+	    }
+	    
+	    $ip .= "." if ($ip ne '');
+	    $ip .= "$c";
+		
+	}
+	
+	last;
+    }
+
+    my $packet = "$mac//$ip";
+
+    print "$packet\n";
+
+    send(SOCKET, $packet, 0,  $broadcastAddr)
+	or die "Error sedning: $!\n";            
+}
+    
+    
+sub addr {
+    my $a = shift;
+    my $port;
+    my $ip;
+    
+    ($port, $ip) = unpack_sockaddr_in $a;
+    
+    return inet_ntoa($ip) . ":" . $port;
+    
+}

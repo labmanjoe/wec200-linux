@@ -1,0 +1,807 @@
+#!/usr/bin/perl -w
+
+##sleep(100000);
+
+use strict;
+
+use IO::Socket;
+use IO::Handle;
+use IO::Handle '_IOLBF';
+use Time::HiRes qw ( time );
+
+## paths used by this script
+
+## these directories need to already exist, and be writeable
+my $piddir = "/var/run/doorman";
+my $logdir = "/var/log/doorman";
+
+## these paths need to exist and be readable
+my $defCardfile = "/etc/doorman/cards";
+my $defCardDir = "/etc/doorman";
+
+## how long to keep door unlocked after valid card
+my $unlockSeconds = 3;
+
+## remote unlock beep time and time to keep unlocked
+my $signalBeepLen = .08;
+my $remunlockSeconds = 8;
+
+
+#### process vars
+
+## logging
+my $lastmonth = -1;
+
+## stuff for cards
+my @cardfiles = ();
+my $cards = {};
+my $cardmod = {};
+
+## arg vars
+my $device;
+my $rex = 0;
+my $invertBit1 = 0;
+my $label = "TEST";
+my @rexopen;
+my @rexopenDelay;
+my $lastHandleChange = 0;
+
+## signal handler variables
+my $requestDoorOpen = 0;
+my $requestBeep = 0;
+my $requestInternalOpen = 0;
+
+
+
+## SUBROUTINES HERE -- main program below subroutines
+
+## lookup a card by number
+## also reread cards if they have changed
+sub lookup($) {
+
+    my $numval = shift;
+
+    my $reread = 0;
+    
+    if (scalar(@cardfiles) == 0) {
+        push (@cardfiles, $defCardfile);
+    }
+    
+    for my $cardfile (@cardfiles) {
+        my $thisread = 0;
+
+        my @stat = stat $cardfile;
+    
+        if (@stat) {
+            my $newmod = $stat[9];
+            my $mod = $cardmod->{$cardfile};
+                        
+            if (!defined $mod) {
+                $thisread = 3;
+            }
+            elsif ($newmod != $mod) {
+                if ($newmod == time) {
+                    $newmod--;
+                    $thisread = 2;
+                }
+                else {
+                    $thisread = 1;
+                }
+            }
+            
+            $cardmod->{$cardfile} = $newmod;
+            
+            $reread = $thisread if ($thisread > $reread);            
+        }
+    }
+    
+    
+    if ($reread) {
+        my $newcards = {};
+        my $error = 0;
+        
+        for my $cardfile (@cardfiles) {
+            if (open CARDFILE, "<$cardfile") {
+                while (<CARDFILE>) {
+                    my $line = $_;
+                    $line =~ s/[\x0d\x0a]//g;
+                    $line =~ s/\x23.*$//;
+                    $line =~ s/^\s+/ /;
+                    $line =~ s/\s+$//;
+                    $line =~ s/\s+/ /g;
+                    if ($line =~ m/^([0-9]{13}) (.*)$/ ) {
+                        my $card = $1;
+                        my $who = $2;
+                        $newcards->{$card} = $who;
+                        ##print "read card $card for $who\n";
+                    }
+                }
+                close CARDFILE;
+            }
+            else {
+                logit("could not read $cardfile: $!");
+                $error++;
+            }
+        }
+        
+        my $count = scalar(keys %$newcards);
+        
+        if ($count == 0) {
+            logit("did not read any cards.  will not reload cards for fear of locking everyone out.");
+            $error++;
+        }
+
+        if ($error) {
+            logit("$error error(s) encountered re-reading card file(s).  not reloading cards.");
+            $reread = 0;
+        }
+        
+        if ($reread == 3) {
+            logit ("initial read of card file(s).  loaded $count card(s)");            
+        }
+        elsif ($reread == 2) {
+            logit ("card file(s) just changed.  (re-)read $count card(s).  will re-read next time as well.");
+        }
+        elsif ($reread == 1) {
+            logit ("card file(s) changed.  read $count card(s)");                        
+        }
+        
+        $cards = $newcards if ($reread);        
+    }
+   
+    return $cards->{$numval};
+}
+
+## signal handlers
+sub requestDoorOpen {
+    $requestDoorOpen = 1;
+}
+
+sub signalingBeep {
+    $requestBeep = 2;
+}
+
+sub internalDoorOpen {
+    $requestInternalOpen = 1;
+}
+
+sub logdie {
+    my $arg = shift;
+    logit($arg);
+    die $arg;
+}
+
+## log a log line
+sub logit {
+
+    if ($label =~ m/^TEST/) {
+        my $arg = shift; print "" . localtime(time) . " | $label | " . $arg . "\n";
+        return;
+    }
+
+    my @ltime = localtime(time);
+    
+    if ($lastmonth ne $ltime[4]) {
+        close LOGFILE if ($lastmonth ne '-1');
+        my $z = "";
+        $z = "0" if ($ltime[4] < 9);
+
+        my $logfile = "door." . ($ltime[5] + 1900) . $z . ($ltime[4] + 1) . ".log";
+        open LOGFILE, ">>$logdir/$logfile";
+        $lastmonth = $ltime[4];
+        LOGFILE->autoflush(1);
+        chdir($logdir);
+        symlink($logfile,"door.current.log.$$.$label");
+        rename("door.current.log.$$.$label","door.current.log");
+        chdir("/");
+    }
+    
+    my $arg = shift;
+    print LOGFILE "" . localtime(time) . " | " . $label . " | " . $arg . "\n";
+}
+
+
+##### MAIN PROGRAM BEGINS HERE
+##### MAIN PROGRAM BEGINS HERE
+##### MAIN PROGRAM BEGINS HERE
+##### MAIN PROGRAM BEGINS HERE
+#####################################################################################
+
+## don't hold some random directory open
+chdir("/");
+
+while (@ARGV) {
+    my $arg = shift @ARGV;
+    if ($arg eq '-r') {
+        $rex = 1;
+    }
+    elsif ($arg eq '-i') {
+        $invertBit1 = 1;
+    }
+    elsif ($arg eq '-l') { 
+        $label = shift;
+    }
+    elsif ($arg eq '-f') { 
+        my $file = shift;
+        $file = "$defCardDir/$file" if ($file !~ m|^/|);
+        push (@cardfiles, $file);
+    }
+    elsif ($arg eq '-du' || $arg eq '--duration-unlock') { 
+        $unlockSeconds = shift;
+        die "nonnumeric $unlockSeconds" if (!($unlockSeconds =~ m/^[0-9]*[.]?[0-9]+$/));
+    }
+    elsif ($arg eq '-dru' || $arg eq '--duration-remote-unlock') { 
+        $remunlockSeconds = shift;
+        die "nonnumeric $remunlockSeconds" if (!($remunlockSeconds =~ m/^[0-9]*[.]?[0-9]+$/));
+    }
+    elsif ($arg eq '-o') { 
+        my $otherdoor = shift;
+        my $delay = 3;
+        $delay = $1 if ($otherdoor =~ s/:([.0-9]+)$//);
+        
+        push @rexopen, $otherdoor;
+        push @rexopenDelay, $delay;
+    }
+    else {
+        $device = $arg;
+        last;
+    }
+}
+
+if (!defined $device) {
+    die "Must specify serial port or IP address!";
+}
+
+my $pidfile = "$piddir/$label.pid";
+
+my $sock;
+my $socno;
+
+## command variables
+my $initcmd;
+my $unlockcmd;
+my $lockcmd;
+my $beepcmd;
+my $nobeepcmd;
+my $pollcmd = "";
+
+if ($device =~ m|^/dev/|) {
+    ## matches /dev, assume MaCaPS serial device 
+    `stty <$device 9600 cs8 clocal cread ignpar icrnl icanon min 1 time 0`;
+    open $sock, "+<$device" or die "$!";
+    $socno = fileno($sock);
+
+    $unlockcmd = "\x02\x34\x30\x03";
+    $lockcmd = "\x02\x34\x31\x03";
+    $beepcmd =   "\x02\x32\x30\x03";# . "\x02\x36\x30\x03";
+    $nobeepcmd = "\x02\x32\x31\x03";# . "\x02\x36\x31\x03";
+    ## this kind of reader cannot be polled
+    $pollcmd = "";
+    
+    ## this kind of reader has no init command, but reset to defaults;
+    $initcmd = $lockcmd;
+
+    #$sock->autoflush(1);
+    select $sock;
+    $| = 1;
+    select STDOUT;
+}
+else {
+    my $port = 1001;
+    $port = $1 if ($device =~ s/:([0-9]+)$//);
+
+    ## not a device, must be an IP address for a wec200 device
+    $sock = new IO::Socket::INET (PeerAddr => $device,
+                                  PeerPort => $port,     
+                                  Proto => 'tcp');
+
+    die "could not create socket: $!\n" unless $sock;
+
+    $sock->autoflush(1);
+    $socno = $sock->fileno;
+
+    ## format: binary
+    $initcmd = "\x02SF0\r";
+
+    ## send unsolicited change notifications
+    $initcmd .= "\x02SC1\r";
+
+    ## poll current state of lines
+    $initcmd .= "\x02GI\r";
+
+
+    $unlockcmd = "\x02SA\x64\r";
+    $lockcmd = "\x02SA\xff\r";
+    $beepcmd = "\x02SD\x64\r";
+    $nobeepcmd = "\x02SD\xff\r";
+    $pollcmd = "\x02SC1\r";    
+}
+
+
+
+## bit vector for select
+my $revval = '';
+vec($revval, $socno, 1) = 1;
+
+
+## line accumulated from socket
+my $accum = "";
+
+## remote open stuff
+my $rexopenPos = -1;
+my $rexopenSchedtime = 0;
+
+
+## say hello
+logit("daemon restarted");
+
+## prime the card info, make sure we can read it
+lookup("FAKE");
+
+if (scalar(keys %$cards) == 0) {    
+    logdie("did not read any cards at all, i am useless, so dying.");
+}
+
+## set up signal handlers
+$SIG{USR1} = \&requestDoorOpen;
+$SIG{USR2} = \&internalDoorOpen;
+$SIG{ALRM} = \&signalingBeep;
+
+## initially empty, so first poll will register as a change
+my $obit1 = "";
+my $obit2 = "";
+
+## initialize the device
+print $sock $initcmd;
+
+my $lastDataIn = time;
+my $openSince = 0;
+my $openWarn = 0;
+my $lastMotion = 0;
+my $nextCloseTime = 0;
+my %commands;
+
+while (1) {
+    my $rev = $revval;
+    my $wev = '';
+    my $eev = $revval;
+    
+    
+    my $now = time;
+
+    my $wait = 1;
+    
+    my @commtimes = sort keys %commands;
+    while (scalar (@commtimes)) {
+        my $nexttime = $commtimes[0];
+        if ($now >= $nexttime) {
+            my $command = $commands{$nexttime};
+            if (ref($command) eq 'CODE') {
+                ##print "code command: $command\n";
+                &$command;                
+            }
+            else { 
+                ##print "command: $command\n";
+                print $sock $command;
+            }
+            delete $commands{$nexttime};
+            shift @commtimes;
+            next;
+        }
+        else {
+            $wait = $nexttime - $now;
+            $wait = 1 if ($wait > 1);
+            last;
+        }
+    }
+
+    my $selret = select $rev, $wev, $eev, $wait;
+    
+    $now = time;
+    
+    if ($pollcmd ne '' && $now - $lastDataIn > 10) {
+        logit("converter board not responding, exiting.");
+        die "promag not responding";
+    }
+
+    if ($requestBeep) {
+        if ($requestBeep == 2) {
+            logit("SIGALRM -- making signaling beep");
+        }
+        else {
+            logit("making signaling beep");
+        }
+        $requestBeep = 0;
+        print $sock $beepcmd;
+        schedule($now + $signalBeepLen, $nobeepcmd);        
+        next;
+    }
+
+    if ($requestInternalOpen) {
+        logit("SIGUSR2 -- unlocking for ${remunlockSeconds}sec (doorhandle request)");
+        print $sock $unlockcmd;
+        print $sock $beepcmd;        
+        
+        schedule($now + .15, $nobeepcmd);
+        schedule($now + .30, $beepcmd);
+        schedule($now + .45, $nobeepcmd);
+        scheduleLock($now + $remunlockSeconds);
+
+        $requestInternalOpen = 0;
+        next;
+    }
+
+    if ($requestDoorOpen) {
+        logit("SIGUSR1 -- unlock for ${remunlockSeconds}sec & beeping reader 4x & again in 3 seconds");
+        print $sock $unlockcmd;
+        print $sock $beepcmd;        
+        
+        schedule($now + .15, $nobeepcmd);
+        schedule($now + .30, $beepcmd);
+        schedule($now + .45, $nobeepcmd);
+        schedule($now + .60, $beepcmd);
+        schedule($now + .75, $nobeepcmd);
+
+        schedule($now + 3, $beepcmd);
+        schedule($now + 3.15, $nobeepcmd);
+        schedule($now + 3.30, $beepcmd);
+        schedule($now + 3.45, $nobeepcmd);
+        schedule($now + 3.60, $beepcmd);
+        schedule($now + 3.75, $nobeepcmd);
+        scheduleLock($now + $remunlockSeconds);
+
+        $requestDoorOpen = 0;
+        next;
+    }
+
+    
+    if ($openSince && !$openWarn && ($now - $openSince) > 60) {
+        $openWarn = 1;
+        logit("WARNING: Door open for more than 60 seconds");
+    }
+           
+    my $char = " ";
+
+    if ($selret && (($rev & $revval) || ($eev & $revval))) {
+        my $rv = sysread $sock, $char, 1, 0;
+        $lastDataIn = $now;
+        
+        if (defined $rv && ($rv == -1 || $rv == 0)) {
+            logit("got end of stream on socket");
+            die "got end of stream on socket";
+        }
+
+        ##print "GOT CHAR $char\n";
+
+        if ($char eq "\n" || $char eq "\r") {
+            ##print "GOT LINE $accum\n";
+
+            if ($accum =~ m/^\x02W([01]{26})$/
+                || $accum =~ m/\x22([0-9]{13})$/) {  ## card read
+                
+                my $binval = $1;
+
+                my $numval = bin2card($binval);
+
+                my $who = lookup($numval);
+
+                if ($who) {
+                    my $now = $now;
+                    print $sock $unlockcmd;
+                    logit("Valid card scanned for $who, unlocking door for $unlockSeconds seconds");
+                    scheduleLock($now + $unlockSeconds);
+                }                                    
+                else {
+                    logit("unknown card $numval scanned");
+                    ## beep at them for 2 seconds if they're wrong
+                    print $sock $beepcmd;
+                    schedule ($now + 2, $nobeepcmd);
+                }
+            }        
+            elsif ($accum eq "\x02C") {  ## got a change indication, do query of state
+                ##logit("got change indication");
+                print $sock "\x02GI\r";
+            }
+            elsif ($accum =~ m/^\x02([01])([01])$/) {  ## state of inputs
+		my $bit1 = $1;
+                my $bit2 = $2;
+
+                $bit1 = !$bit1 if ($invertBit1);
+		
+                ## did bit change?
+                if ($obit1 ne $bit1) {                    
+
+                    if ($rex) {        ## rex is actual rex switch
+
+                        if ($bit1) {
+                            ## in this block means handle is depressed (open) and we just changed to that state
+
+                            $lastMotion = $now;
+                            if ($obit2 && @rexopen) {
+                                ## this block means the door is open, and the user is toggling the handle to indicate
+                                ## that they want to open another door (and we are configured to do so)
+                                
+                                if ($lastHandleChange < $now - 2) {   ## handle was last released more than 2 sec ago
+                                    ## reset everything
+                                    $rexopenPos = -1;
+                                    $rexopenSchedtime = 0;
+                                }
+                                
+                                $rexopenPos = -1 if (++$rexopenPos >= scalar(@rexopen));
+
+                                if ($rexopenPos == -1) {
+                                    logit("inside door handle reopened while door open. signal cancel opening other doors");
+                                    $requestBeep = 1;
+                                }
+                                else {
+                                    my $otherdoor = $rexopen[$rexopenPos];
+                                    logit("inside door handle reopened while door open. signal for $otherdoor");
+                                    beepOther($otherdoor);
+                                }
+                            }
+                            else {
+                                logit("inside door handle opened");
+                            }
+                            
+                            $lastHandleChange = $now;
+                        }
+                        else {
+                            $lastMotion = 0;
+                            my $cancelLogMsg = "";
+
+                            if ($rexopenSchedtime) {
+                                schedule ($rexopenSchedtime, \&nop);
+                                $rexopenSchedtime = 0;
+                                ##print "CANCEL\n";
+                                $cancelLogMsg = " (cancel previous rex open)";
+                            }
+                            
+                            if ($rexopenPos >= 0) {
+                                my $door = $rexopen[$rexopenPos];
+                                my $delay = $rexopenDelay[$rexopenPos];
+                                $rexopenSchedtime = $now + $delay;
+                                logit("inside door handle released. will open $door in $delay sec.  $cancelLogMsg"); 
+                                schedule($rexopenSchedtime, sub { openOther($door); });
+                            }
+                            else {
+                                logit("inside door handle released. $cancelLogMsg");
+                            }
+                            $lastHandleChange = $now;
+                        }
+
+                    }
+                    else {  ## (not a rex switch -- just a motion detector)
+
+                        if ($bit1) {
+                            
+                            ## in this block means motion not detected, 
+                            ## and just changed to that state
+                            if ($lastMotion) {
+                                my $diff = int($now - $lastMotion + .5);
+                                $lastMotion = 0;
+                                logit("${diff}s of motion just ended");
+                            }
+                            else {
+                                logit("No motion detected");
+                            }
+                        }
+                        else {
+                            $lastMotion = $now;
+                            ##logit("Motion Detected");
+                        }
+                    }
+                        
+                }
+                
+                if ($obit2 ne $bit2) {
+                    if ($bit2) {
+                        $openSince = $now;
+                        $openWarn = 0;
+                        if ($now <= $nextCloseTime) {
+                            logit("Door Opened (while unlocked)");
+                        }
+                        elsif ($lastMotion) {
+                            logit("Door Opened (likely from inside)");
+                        }
+                        elsif ($obit2 eq '') {
+                            logit("Door is open");
+                        }
+                        else {
+                            if ($rex) {
+                                logit("Door Opened (key almost certainly used)");
+                            }
+                            else {
+                                logit("Door Opened (likely from inside but maybe key used?)");
+                            }
+                        }
+                        $rexopenPos = -1;
+                        $rexopenSchedtime = 0;                       
+                    }
+                    else {
+                        if ($openSince) {                            
+                            my $diff = int($now - $openSince + .5);
+                            logit("Door now closed.  Duration open: $diff sec");
+                            $openSince = 0;
+                        }
+                        else {
+                            logit("Door is closed.");
+                        }
+                    }
+                }
+                
+                $obit1 = $bit1;
+                $obit2 = $bit2;                
+            }
+            elsif ($accum eq "\x02A") {
+                ## we just got a response to the polling command,
+                ## do nothing
+            }
+            else {
+                logit("unexpected data from card reader: $accum");
+            }
+            $accum = "";
+        }
+        else {
+            $accum .= $char;
+        }
+    }
+    elsif ($now - $lastDataIn > 4 && $pollcmd ne '') {        
+        ## poll the reader (request async updates) to make sure we're still
+        ## connected to it
+        print $sock $pollcmd; 
+    }
+    
+    checkPidfile();
+    
+}
+
+
+
+
+sub bin2card {
+
+    my $val = shift;
+
+    if (length($val) == 26) {
+
+        $val =~ s/.$//;
+        $val =~ s/^.//;
+        
+        my $pos = 0;
+        my $ret = 0;
+        my $sitecode = 0;
+        
+        while ($val ne '') {
+            $val =~ s/^(.)//;
+            my $bit = $1;
+            $ret = $ret * 2 + $bit;
+            if (++$pos == 8) {
+                $sitecode = $ret;
+                $ret = 0;
+            }
+        }
+        
+        return sprintf("%08d%05d", $sitecode, $ret);
+    }
+    elsif (length($val) == 13) {
+        return $val;
+    }
+    else {
+        return "UNKNOWN CARD FORMAT";
+    }
+}
+
+
+sub checkPidfile {
+    my $neednew = 0;
+
+    if (!open PIDFILE, "<$pidfile") {
+        $neednew = 1;
+    }
+    else {
+        my $line = <PIDFILE>;
+        $line =~ s/[\x00-\x20]//g;
+        if ($line ne $$) {
+            unlink($pidfile);
+            $neednew = 1;
+        }
+        close PIDFILE;
+    }
+    
+    if ($neednew) {
+        
+        if(!open PIDFILE, ">$pidfile.tmp") {
+            logit("Unable to write new pidfile $pidfile.tmp ($!)  pid is $$");        
+        }
+        elsif (!rename("$pidfile.tmp", "$pidfile")) {
+            logit("Unable to rename to new pidfile $pidfile ($!)  pid is $$");                   
+        }
+        else {
+            print PIDFILE "$$\n";
+            close PIDFILE;
+            logit("New pidfile $pidfile written (pid is $$)");
+        }
+    }
+}
+
+sub schedule {
+    my $when = shift;
+    my $what = shift;
+
+    $when = sprintf("%030.10f", $when);
+    ## hack so that code schedules and string schedules can be scheduled for exactly the same time
+    ## unlikely to happen, but do it anyway
+    $when .= "0000000" if (ref($what) eq 'CODE');
+
+    ##print "schedule $when action $what\n";
+
+    if (!defined $what) {
+        delete $commands{$when};
+    }
+    elsif (ref($what) eq 'CODE') {
+        $commands{$when} = $what;       
+    }
+    else {       
+        my $old = $commands{$when};
+        $old = "" if (!defined $old);
+        $commands{$when} = $old . $what;
+    }
+}
+
+sub pidOther {
+    my $label = shift;
+    if (open PIDFILE, "<$piddir/$label.pid") {
+        my $pid = <PIDFILE>;
+        $pid =~ s/[\x0d\x0a]//g;
+        close PIDFILE;
+        return $pid;
+    }
+    return 0;
+    
+}
+
+sub beepOther {
+    my $door = shift;
+    ##print "BEEP OTHER $door\n";
+    my $pid = pidOther($door);
+    kill('ALRM', $pid) if ($pid);
+}
+
+sub openOther {
+    my $pos = $rexopenPos;
+    return if ($pos < 0);
+    my $door = $rexopen[$rexopenPos];
+    #print "OPEN OTHER $door\n";
+    my $pid = pidOther($door);
+    kill('USR2', $pid) if ($pid);
+}
+
+sub nop {
+    ## noop
+}
+
+
+sub scheduleLock {
+    my $when = shift;
+    
+    $nextCloseTime = $when if ($when > $nextCloseTime) ;
+    
+    schedule($nextCloseTime, \&maybeLock);
+    
+}
+
+sub maybeLock {
+    my $now = time;
+
+    if ($now >= $nextCloseTime) {
+        logit("locking door");
+                
+        ## safety for serial card reader
+        select undef, undef, undef, .9 if ($pollcmd eq "");
+
+        print $sock $lockcmd;
+    }
+    else {
+        logit("still need to be open");
+    }
+}

@@ -1,0 +1,58 @@
+## Format This file is
+##    <card number> <name> ## <comment, optional>
+##
+## note that card numbers themselves are divided up into two parts.
+## 
+## The first eight digits are called the "Facility Code" and
+## The last 5 digits are called the card number.
+##
+##  0000021502581
+##  ^^^^^^^^
+## Facility ^^^^^
+## Code     |||||
+##          Card Number
+##
+## The facility code is only encoded with 8 bits on the card,
+##    but for some reason the reader spits out all the extra zeroes.
+##    The facility code is not usually stamped on the card directly,
+##    but often another number which effectively maps to the facility
+##    code is printed on the card.   There are only a few facility codes
+##    that the building uses.
+## 
+## The card number is encoded with 16 bits on the card (values up to
+##    65535), so there are no extra digits for the card number.
+##    The card number is often printed on the card as 
+##    a 5 digit 0-prefixed number.  In some cases the 5 digit printed
+##    number is not the actual number for the cards; in this case we
+##    usually pre-scan the cards and note the printed number in
+##    commented-out card entries in this file
+##
+## This is the file for the 
+##    ___  _   _ _____ ____ ___ ____  _____ 
+##   / _ \| | | |_   _/ ___|_ _|  _ \| ____|
+##  | | | | | | | | | \___ \| || | | |  _|  
+##  | |_| | |_| | | |  ___) | || |_| | |___ 
+##   \___/ \___/  |_| |____/___|____/|_____|  Doors.
+##
+## It is read by only by the card readers for the entry doors.
+## Someone listed in this file can only open the outside doors.
+##
+## There are three groups of doors.
+##
+## The highest security level is the IT lab, which is only 
+## accessible by people whose card is listed in the file
+##    /etc/doorman/cards.itlab
+##
+## The next security level is the 5th and 6th floor server rooms.
+## These are accessible by people whose cards are listed in the files
+##    /etc/doorman/cards.itlab   AND
+##    /etc/doorman/cards.server
+##
+## The last security level is the general entry doors group.   The
+## entry doors are openable by people listed in any one of the
+## 3 files:
+##    /etc/doorman/cards.itlab   AND
+##    /etc/doorman/cards.server  AND
+##    /etc/doorman/cards
+
+0000002944222 John Malkovich

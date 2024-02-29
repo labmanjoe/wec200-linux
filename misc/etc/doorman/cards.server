@@ -1,0 +1,34 @@
+## This is the file for the 
+##  ____    _____   ____   __     __  _____   ____  
+## / ___|  | ____| |  _ \  \ \   / / | ____| |  _ \ 
+## \___ \  |  _|   | |_) |  \ \ / /  |  _|   | |_) |
+##  ___) | | |___  |  _ <    \ V /   | |___  |  _ < 
+## |____/  |_____| |_| \_\    \_/    |_____| |_| \_\   Room
+##
+## It is read by the card readers for the entry doors in addition
+## to the 5th and 6th floor server room card readers.
+##
+## Someone listed in this file can open the server room doors, and the
+## main entry doors.  If they are listed here they should not also be
+## listed in the general card file.
+##
+## There are three groups of doors.
+##
+## The highest security level is the IT lab, which is only 
+## accessible by people whose card is listed in the file
+##    /etc/doorman/cards.itlab
+##
+## The next security level is the 5th and 6th floor server rooms.
+## These are accessible by people whose cards are listed in the files
+##    /etc/doorman/cards.itlab   AND
+##    /etc/doorman/cards.server
+##
+## The last security level is the general entry doors group.   The
+## entry doors are openable by people listed in any one of the
+## 3 files:
+##    /etc/doorman/cards.itlab   AND
+##    /etc/doorman/cards.server  AND
+##    /etc/doorman/cards
+##
+
+0000002912345 Jim Carrey
